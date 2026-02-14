@@ -2,11 +2,8 @@
 # -*- coding: utf-8 -*-
 
 """
-File: checkin.py(GLaDOS签到)
-Author: Hennessey
 cron: 40 0 * * *
-new Env('GLaDOS签到');
-Update: 2026/02/14
+new Env('GlaDOS签到');
 """
 
 import requests
@@ -16,10 +13,11 @@ import sys
 import time
 
 
-# 获取GlaDOS账号Cookie
+# ===============================
+# 获取Cookie
+# ===============================
 def get_cookies():
     if os.environ.get("GR_COOKIE"):
-        print("已获取并使用Env环境 Cookie")
         if '&' in os.environ["GR_COOKIE"]:
             cookies = os.environ["GR_COOKIE"].split('&')
         elif '\n' in os.environ["GR_COOKIE"]:
@@ -27,126 +25,111 @@ def get_cookies():
         else:
             cookies = [os.environ["GR_COOKIE"]]
     else:
-        try:
-            from config import Cookies
-            cookies = Cookies
-        except:
-            cookies = []
-        if len(cookies) == 0:
-            print("未获取到正确的GlaDOS账号Cookie")
-            return
-    print(f"共获取到{len(cookies)}个GlaDOS账号Cookie\n")
-    print(f"脚本执行时间(北京时区): {time.strftime('%Y/%m/%d %H:%M:%S', time.localtime())}\n")
+        print("未获取到 GlaDOS Cookie")
+        return []
+
+    print(f"共获取到 {len(cookies)} 个账号\n")
     return cookies
 
 
-# 加载通知服务
+# ===============================
+# 通知
+# ===============================
 def load_send():
     cur_path = os.path.abspath(os.path.dirname(__file__))
     sys.path.append(cur_path)
     if os.path.exists(cur_path + "/sendNotify.py"):
-        try:
-            from sendNotify import send
-            return send
-        except Exception as e:
-            print(f"加载通知服务失败：{e}")
-            return None
+        from sendNotify import send
+        return send
     else:
-        print("加载通知服务失败")
         return None
 
 
-# GlaDOS签到
+# ===============================
+# 核心签到逻辑
+# ===============================
 def checkin(cookie):
-    # 默认域名，可通过环境变量覆盖
+
     BASE_URL = os.environ.get("GLADOS_BASE_URL", "https://glados.cloud").rstrip("/")
 
     checkin_url = f"{BASE_URL}/api/user/checkin"
-    state_url = f"{BASE_URL}/api/user/status"
-    referer = f"{BASE_URL}/console/checkin"
-    origin = BASE_URL
+    status_url = f"{BASE_URL}/api/user/status"
+    points_url = f"{BASE_URL}/api/user/points"
 
-    useragent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Content-Type": "application/json;charset=UTF-8",
+        "Referer": f"{BASE_URL}/console/checkin",
+        "Origin": BASE_URL,
+        "Cookie": cookie
+    }
 
-    payload = {
+    # 🔥 修复关键：固定 token
+    body = {
         "token": "glados.one"
     }
 
     try:
-        checkin = requests.post(
+        # ===== 签到 =====
+        resp = requests.post(
             checkin_url,
-            headers={
-                "cookie": cookie,
-                "referer": referer,
-                "origin": origin,
-                "user-agent": useragent,
-                "content-type": "application/json;charset=UTF-8"
-            },
-            data=json.dumps(payload),
+            headers=headers,
+            data=json.dumps(body),
             timeout=15
         )
 
-        state = requests.get(
-            state_url,
-            headers={
-                "cookie": cookie,
-                "referer": referer,
-                "origin": origin,
-                "user-agent": useragent
-            },
-            timeout=15
+        checkin_result = resp.json()
+        message = checkin_result.get("message", "未知返回")
+
+        # ===== 查询状态 =====
+        status_resp = requests.get(status_url, headers=headers, timeout=15)
+        status_data = status_resp.json().get("data", {})
+
+        email = status_data.get("email", "未知账号")
+        left_days = str(status_data.get("leftDays", "0")).split(".")[0]
+
+        # ===== 查询积分 =====
+        points_resp = requests.get(points_url, headers=headers, timeout=15)
+        points_data = points_resp.json().get("data", {})
+        points = points_data.get("points", 0)
+
+        content = (
+            f"账号：{email}\n"
+            f"签到结果：{message}\n"
+            f"剩余天数：{left_days}\n"
+            f"当前积分：{points}\n\n"
         )
 
-    except Exception as e:
-        print(f"签到失败，请检查网络：{e}")
-        return None, None, None
-
-    try:
-        checkin_json = checkin.json()
-        state_json = state.json()
-
-        mess = checkin_json.get("message", "未知返回")
-
-        # 防止接口结构变化报错
-        data = state_json.get("data", {})
-        mail = data.get("email", "未知账号")
-        left_days = str(data.get("leftDays", "0")).split(".")[0]
+        print(content)
+        return content
 
     except Exception as e:
-        print("签到接口返回内容：", checkin.text)
-        print("状态接口返回内容：", state.text)
-        print(f"解析登录结果失败：{e}")
-        return None, None, None
-
-    return mess, left_days, mail
+        error_msg = f"签到异常：{e}\n\n"
+        print(error_msg)
+        return error_msg
 
 
-# 执行签到任务
-def run_checkin():
-    contents = []
+# ===============================
+# 主执行
+# ===============================
+def main():
+    contents = ""
     cookies = get_cookies()
-    if not cookies:
-        return ""
 
     for cookie in cookies:
-        ret, remain, email = checkin(cookie)
-        if not ret:
-            continue
+        contents += checkin(cookie)
 
-        content = f"账号：{email}\n签到结果：{ret}\n剩余天数：{remain}\n"
-        print(content)
-        contents.append(content)
-
-    contents_str = "".join(contents)
-    return contents_str
+    return contents
 
 
 if __name__ == "__main__":
+
     title = "GlaDOS签到通知"
-    contents = run_checkin()
-    send_notify = load_send()
-    if send_notify:
-        if contents == "":
-            contents = "签到失败，请检查账户信息以及网络环境"
-            print(contents)
-        send_notify(title, contents)
+    content = main()
+
+    send = load_send()
+
+    if send:
+        if not content:
+            content = "签到失败，请检查 Cookie 或网络"
+        send(title, content)
