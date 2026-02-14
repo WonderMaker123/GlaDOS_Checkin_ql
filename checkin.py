@@ -58,7 +58,8 @@ def load_send():
 
 # GlaDOS签到
 def checkin(cookie):
-    BASE_URL = "https://glados.cloud"
+    # 默认域名，可通过环境变量覆盖
+    BASE_URL = os.environ.get("GLADOS_BASE_URL", "https://glados.cloud").rstrip("/")
 
     checkin_url = f"{BASE_URL}/api/user/checkin"
     state_url = f"{BASE_URL}/api/user/status"
@@ -105,8 +106,11 @@ def checkin(cookie):
         state_json = state.json()
 
         mess = checkin_json.get("message", "未知返回")
-        mail = state_json["data"]["email"]
-        time_left = state_json["data"]["leftDays"].split(".")[0]
+
+        # 防止接口结构变化报错
+        data = state_json.get("data", {})
+        mail = data.get("email", "未知账号")
+        left_days = str(data.get("leftDays", "0")).split(".")[0]
 
     except Exception as e:
         print("签到接口返回内容：", checkin.text)
@@ -114,7 +118,7 @@ def checkin(cookie):
         print(f"解析登录结果失败：{e}")
         return None, None, None
 
-    return mess, time_left, mail
+    return mess, left_days, mail
 
 
 # 执行签到任务
